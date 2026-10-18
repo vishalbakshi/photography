@@ -1,0 +1,285 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Look Closer</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Archivo+Black&display=block" rel="stylesheet">
+<style>
+  html, body {
+    margin: 0;
+    background: #fff;
+    overflow-x: hidden;
+  }
+  canvas {
+    position: fixed;
+    inset: 0;
+    width: 100vw;
+    height: 100vh;
+    display: block;
+    z-index: 0;
+  }
+
+  /* ---- Gallery ---- */
+  #gallery {
+    position: relative;
+    z-index: 1;
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    align-items: flex-start;
+    padding: 70vh 2vw 20vh;   /* first screen is just the background */
+  }
+  .clip {
+    position: relative;
+    /* --r, --x, --y are random 0..1 values set per clip */
+    width: calc(19.2vw + var(--r) * 12vw);
+    aspect-ratio: 3 / 4;
+    margin: calc(var(--y) * 14vh) calc(1vw + var(--x) * 3vw) 0;
+    background: #ddd;
+    cursor: pointer;
+  }
+  .clip.wide {
+    width: calc(28.8vw + var(--r) * 12vw);
+    aspect-ratio: 4 / 3;
+  }
+  .clip img, .clip video {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    display: block;
+  }
+  .clip video {
+    opacity: 0;
+    transition: opacity .2s;
+  }
+  .clip video.on { opacity: 1; }
+
+  @media (max-width: 700px) {
+    #gallery { padding-top: 60vh; }
+    .clip      { width: calc(48vw + var(--r) * 21.6vw); }
+    .clip.wide { width: min(92vw, calc(72vw + var(--r) * 28.8vw)); }
+  }
+</style>
+</head>
+<body>
+<canvas id="screen"></canvas>
+<main id="gallery"></main>
+<script>
+// ---- Video gallery ---------------------------------------------------------
+// Each clip shows a small JPG poster (photos/posters/) and only loads the
+// web-sized MP4 (photos/web/) when you hover it (or tap it on touch screens). Videos that
+// scroll far out of view are unloaded to free memory.
+(() => {
+  // [name, isLandscape]
+  const CLIPS = [
+    ['aggregate-wall', 0], ['authorized-personnel', 1], ['barcode-hydrant', 0],
+    ['blue-hydrangea', 0], ['blue-p-sign', 0], ['blue-stencil-2', 1],
+    ['blue-stencil', 0], ['brick-mud', 0], ['carson-valve-box', 0],
+    ['charcoal-smear', 1], ['dandelion-2', 0], ['dandelion-3', 0],
+    ['dandelion-4', 0], ['dandelion-5', 0], ['dandelion', 0],
+    ['death-by-hanging-poster', 1], ['granite-window', 0], ['hydrant-sticker-2', 0],
+    ['hydrant-sticker', 0], ['hydrant', 0], ['leaf-shadows', 0],
+    ['lichen', 0], ['look-sign', 1], ['magenta-camellia', 0],
+    ['moss-on-boards', 1], ['moss', 0], ['no-parking', 0],
+    ['no-smoking', 0], ['pale-camellia', 0], ['pay-to-park', 0],
+    ['pink-anemone', 0], ['pink-camellia-2', 0], ['pink-camellia', 0],
+    ['pink-survey-mark', 0], ['red-berries', 0], ['red-bricks', 0],
+    ['rusty-bolt', 0], ['rusty-pipe', 0], ['teal-valve-box', 0],
+    ['tree-rings', 0], ['use-ped-signal', 0], ['vent', 1],
+    ['video-drop-box', 1], ['weathered-wood', 0], ['white-paint-drip', 0],
+    ['white-phlox', 0], ['white-poppy', 0], ['wood-chip', 0],
+    ['wood-knot', 0], ['yellow-leaves', 0], ['yellow-paint', 0],
+  ];
+
+  // Seeded random so the layout is the same on every visit.
+  let seed = 7;
+  const rand = () => {
+    seed = (seed + 0x6D2B79F5) | 0;
+    let t = Math.imul(seed ^ (seed >>> 15), 1 | seed);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+
+  // Shuffle so similar subjects (dandelions, camellias) don't bunch up.
+  const order = CLIPS.slice();
+  for (let i = order.length - 1; i > 0; i--) {
+    const j = Math.floor(rand() * (i + 1));
+    [order[i], order[j]] = [order[j], order[i]];
+  }
+
+  const gallery = document.getElementById('gallery');
+  let playing = null;
+
+  function play(clip) {
+    if (playing && playing !== clip) pause(playing);
+    playing = clip;
+    let v = clip.querySelector('video');
+    if (!v) {
+      v = document.createElement('video');
+      v.muted = true;
+      v.loop = true;
+      v.playsInline = true;
+      v.preload = 'auto';
+      v.src = `photos/web/${clip.dataset.name}.mp4`;
+      v.addEventListener('playing', () => v.classList.add('on'));
+      clip.appendChild(v);
+    }
+    v.play().catch(() => {});
+  }
+
+  function pause(clip) {
+    const v = clip.querySelector('video');
+    if (v) v.pause();
+    if (playing === clip) playing = null;
+  }
+
+  function unload(clip) {
+    const v = clip.querySelector('video');
+    if (!v) return;
+    v.pause();
+    v.removeAttribute('src');
+    v.load();             // releases the decoder and buffered data
+    v.remove();
+    if (playing === clip) playing = null;
+  }
+
+  // Drop loaded videos once they're well outside the viewport.
+  const io = new IntersectionObserver(entries => {
+    for (const e of entries) if (!e.isIntersecting) unload(e.target);
+  }, { rootMargin: '100% 0px' });
+
+  for (const [name, wide] of order) {
+    const clip = document.createElement('div');
+    clip.className = 'clip' + (wide ? ' wide' : '');
+    clip.dataset.name = name;
+    clip.style.setProperty('--r', rand().toFixed(3));
+    clip.style.setProperty('--x', rand().toFixed(3));
+    clip.style.setProperty('--y', rand().toFixed(3));
+
+    const img = document.createElement('img');
+    img.src = `photos/posters/${name}.jpg`;
+    img.alt = name.replace(/-/g, ' ');
+    img.loading = 'lazy';     // posters only load as they near the viewport
+    img.decoding = 'async';
+    clip.appendChild(img);
+
+    clip.addEventListener('pointerenter', e => { if (e.pointerType === 'mouse') play(clip); });
+    clip.addEventListener('pointerleave', e => { if (e.pointerType === 'mouse') pause(clip); });
+    // Touch screens have no hover: tap to toggle.
+    clip.addEventListener('click', () => {
+      if (matchMedia('(hover: hover)').matches) return;
+      playing === clip ? pause(clip) : play(clip);
+    });
+
+    gallery.appendChild(clip);
+    io.observe(clip);
+  }
+})();
+</script>
+<script>
+(() => {
+  // ---- Tunables ----------------------------------------------------------
+  const TEXT = 'LOOK CLOSER';
+  const FONT_FAMILY = '"Archivo Black", "Arial Black", Impact, "Helvetica Neue", sans-serif';
+  const TEXT_COLOR = '#000';
+  const ROW_GAP = 0.08;            // gap between rows, as fraction of font size
+  const WORD_GAP = 0.35;           // gap between repeats, as fraction of font size
+  const SLICE = 2;                 // px height of each displaced strip (CSS px)
+  const RIPPLE_AMP = 2;            // px of constant horizontal wobble
+  const RIPPLE_FREQ = 0.018;       // wobble wavelength
+  const RIPPLE_SPEED = 0.8;        // wobble speed
+  const SCAN_SPACING = 3;          // px between scan lines
+  const SCAN_ALPHA = 0.06;         // scan line darkness
+  // -----------------------------------------------------------------------
+
+  const canvas = document.getElementById('screen');
+  const ctx = canvas.getContext('2d');
+  const tile = document.createElement('canvas');
+  const tctx = tile.getContext('2d');
+  const scan = document.createElement('canvas');
+  const sctx = scan.getContext('2d');
+
+  let W = 0, H = 0, dpr = 1, fontSize = 0, pad = 0;
+
+  function build() {
+    dpr = Math.min(window.devicePixelRatio || 1, 2);
+    W = window.innerWidth;
+    H = window.innerHeight;
+    canvas.width = Math.round(W * dpr);
+    canvas.height = Math.round(H * dpr);
+
+    // Giant letters: about a seventh of the shorter side, with a floor for phones.
+    fontSize = Math.max(36, Math.min(W, H) * 0.14);
+    pad = RIPPLE_AMP * 1.35 + 4; // extra width so displaced edges never show
+
+    // Pre-render the tiled text once, wider than the screen.
+    tile.width = Math.round((W + pad * 2) * dpr);
+    tile.height = Math.round(H * dpr);
+    tctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    tctx.clearRect(0, 0, W + pad * 2, H);
+    tctx.fillStyle = TEXT_COLOR;
+    tctx.font = `${fontSize}px ${FONT_FAMILY}`;
+    tctx.textBaseline = 'top';
+
+    const unit = tctx.measureText(TEXT).width + fontSize * WORD_GAP;
+    const rowH = fontSize * (0.82 + ROW_GAP);
+    let row = 0;
+    for (let y = -fontSize * 0.25; y < H; y += rowH, row++) {
+      // Stagger alternate rows by half a word, brick style.
+      const offset = (row % 2) * unit * 0.5;
+      for (let x = -unit + offset; x < W + pad * 2; x += unit) {
+        tctx.fillText(TEXT, x, y);
+      }
+    }
+
+    // Pre-render the scan line overlay.
+    scan.width = canvas.width;
+    scan.height = Math.round((H + SCAN_SPACING) * dpr);
+    sctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    sctx.fillStyle = `rgba(0,0,0,${SCAN_ALPHA})`;
+    for (let y = 0; y < H + SCAN_SPACING; y += SCAN_SPACING) {
+      sctx.fillRect(0, y, W, 1);
+    }
+  }
+
+  function frame(ms) {
+    requestAnimationFrame(frame);
+    // Rebuild if the window size changed (or was zero when we first loaded).
+    if (window.innerWidth !== W || window.innerHeight !== H) build();
+    if (!W || !H) return;
+
+    const t = ms / 1000;
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.fillStyle = '#fff';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+    const sh = SLICE * dpr;
+    for (let y = 0; y < H; y += SLICE) {
+      const dx = Math.sin(y * RIPPLE_FREQ + t * RIPPLE_SPEED) * RIPPLE_AMP
+               + Math.sin(y * RIPPLE_FREQ * 2.7 - t * RIPPLE_SPEED * 1.3) * RIPPLE_AMP * 0.35;
+      const sy = y * dpr;
+      ctx.drawImage(tile, (pad + dx) * dpr, sy, canvas.width, sh, 0, sy, canvas.width, sh);
+    }
+
+    // Scan lines drift slowly downward.
+    const scanOffset = ((t * 8) % SCAN_SPACING) * dpr;
+    ctx.drawImage(scan, 0, scanOffset - SCAN_SPACING * dpr);
+  }
+
+  // Wait for the web font so the first render isn't in a fallback face.
+  const ready = document.fonts && document.fonts.load
+    ? Promise.race([
+        document.fonts.load(`100px "Archivo Black"`),
+        new Promise(r => setTimeout(r, 2000)),
+      ])
+    : Promise.resolve();
+  ready.catch(() => {}).then(() => requestAnimationFrame(frame));
+})();
+</script>
+</body>
+</html>
