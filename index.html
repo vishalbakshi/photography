@@ -213,8 +213,8 @@
     canvas.width = Math.round(W * dpr);
     canvas.height = Math.round(H * dpr);
 
-    // Giant letters: about a seventh of the shorter side, with a floor for phones.
-    fontSize = Math.max(36, Math.min(W, H) * 0.14);
+    // Giant letters: about a tenth of the shorter side, with a floor for phones.
+    fontSize = Math.max(24, Math.min(W, H) * 0.09);
     pad = RIPPLE_AMP * 1.35 + 4; // extra width so displaced edges never show
 
     // Pre-render the tiled text once, wider than the screen.
